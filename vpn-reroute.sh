@@ -37,10 +37,12 @@ usage () {
 }
 
 # Parse options
-while getopts "f:" opt; do
+while getopts "nf:" opt; do
     case "$opt" in
         # -f <path to hosts file>
         f) input_file=$OPTARG
+            ;;
+        n) dry_run=1
             ;;
         *) 
             usage
@@ -84,7 +86,9 @@ fi
 
 run() {
 	echo "+ $*"
+    if [ $dry_run -eq 0 ]; then 
         $*
+    fi
 }
 
 get_default_route () {
