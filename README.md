@@ -28,9 +28,8 @@ cat hosts.txt | ./vpn-reroute.sh
 
 ## How it works
 
-1. Find the gateway that routes 0.0.0.0 - if connected to a VPN, this will be
-   a `utun*` interface - if not, exit
-2. Remove the `0.0.0.0` route via VPN
-3. Find the next default route - this should be the "pre-VPN" default route
-   and re-add it
-4. Iterate through all hosts and route them via the VPN interface
+1. Find the default route - if connected to a VPN, this will route via a `utun*` interface - if not, exit
+2. Find the next default route - this should be the "pre-VPN" default route
+3. Remove the `0.0.0.0` route via VPN
+4. Re-add the pre-VPN default route
+5. Iterate through all hosts and route them via the VPN interface

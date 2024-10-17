@@ -19,16 +19,17 @@
 # cat hosts.txt | ./vpn-reroute.sh
 #
 # How it works:
-# 1. Find the gateway that routes 0.0.0.0 - if connected to a VPN, this will be
+# 1. Find the default route - if connected to a VPN, this will route via 
 #    a utun* interface - if not, exit
-# 2. Remove the 0.0.0.0 route via VPN
-# 3. Find the next default route - this should be the "pre-VPN" default route
-#    and re-add it
+# 2. Find the next default route - this should be the "pre-VPN" default route
+# 3. Remove the 0.0.0.0 route via VPN
+# 4. Re-add the pre-VPN default route
 # 4. Iterate through all hosts and route them via the VPN interface
 
 set -e
 
 input_file=""
+dry_run=0
 
 usage () {
     echo "Usage: $0 [-f hosts file] [...hosts]"
@@ -49,24 +50,56 @@ done
 # Shift all options parsed by getopts so we have positional args in $@
 shift $((OPTIND-1))
 
+hosts=()
+
+# Read hosts from input file, if provided
+if [ -n "$input_file" ];
+then
+    while IFS="" read -r host || [ -n "$host" ]
+    do
+        hosts+=("$host")
+    done < <(grep -v '^#' "$input_file")
+fi
+
+# Read hosts from positional args
+if [ "$#" -gt 0 ]; then
+    hosts=( "${hosts[@]}" "$@" )
+fi
+
+# Read hosts from stdin if none were provided before
+if [ ${#hosts[@]} -eq 0 ]; then
+    while read -r host
+    do
+        [ -z "$host" ] && break
+        [[ $host == \#* ]] && continue
+        hosts+=("$host")
+    done
+fi
+
+if [ ${#hosts[@]} -eq 0 ]; then
+    echo "ERROR: No hosts provided."
+    usage
+fi
+
+
 run() {
 	echo "+ $*"
-	$*
+        $*
 }
 
 get_default_route () {
-    # Get the first default route from netstat
-    netstat -nr -f inet | grep default | head -n1
+    # Get the nth ($1) default route from netstat
+    netstat -nr -f inet | grep default | head -n "${1:-1}" | tail -n1
 }
 
-get_default_gateway () {
-    # Get gateway value from default route
-    get_default_route | awk '{print $2}'
+get_route_gateway () {
+    # Get gateway value from route ($1)
+    echo "$1" | awk '{print $2}'
 }
 
-get_default_interface () {
-    # Get interface name value from default route
-    get_default_route | awk '{print $4}'
+get_route_interface () {
+    # Get interface name value from route ($1)
+    echo "$1" | awk '{print $4}'
 }
 
 add_default_route () {
@@ -85,7 +118,10 @@ add_hostname_route () {
 }
 
 # Get the default route interface name
-vpn_interface=$(get_default_interface)
+vpn_route=$(get_default_route 1)
+vpn_interface=$(get_route_interface "$vpn_route")
+echo "Found default route:"
+echo "$vpn_route"
 
 # If it doesn't start with utun*, exit
 if [[ $vpn_interface != utun* ]] ;
@@ -97,45 +133,20 @@ then
     exit 1
 fi
 
-echo "Deleting VPN default route"
+# Get the second default gateway (after VPN)
+default_route=$(get_default_route 2)
+default_gateway=$(get_route_gateway "$default_route")
+echo "Found non-VPN default route: "
+echo "$default_route"
+
+echo "Deleting default (VPN) route"
 remove_default_route "$vpn_interface"
 
-# The default gateway should be the gateway we want to route Internet through
-default_gateway=$(get_default_gateway)
-
-echo "Re-adding old default route"
+echo "Re-adding non-VPN default route"
 add_default_route "$default_gateway"
 
-hosts_provided=0
-
-# Read hosts from input file, if provided
-if [ -n "$input_file" ];
-then
-    hosts_provided=1
-    while IFS="" read -r host || [ -n "$host" ]
-    do
-        echo "Redirecting $host through VPN"
-        add_hostname_route "$host" "$vpn_interface"
-    done < <(grep -v '^#' "$input_file")
-fi
-
-# Read hosts from positional args
-if [ "$#" -gt 0 ]; then
-    hosts_provided=1
-    for host in "$@"
-    do
-        echo "Redirecting $host through VPN"
-        add_hostname_route "$host" "$vpn_interface"
-    done
-fi
-
-# Read hosts from stdin if none were provided before
-if [ $hosts_provided -eq 0 ]
-then
-    while read -r host
-    do
-        [ -z "$host" ] && break
-        echo "Redirecting $host through VPN"
-        add_hostname_route "$host" "$vpn_interface"
-    done < <(grep -v '^#' /dev/stdin)
-fi
+echo "Redirecting ${#hosts[@]} host(s) through VPN"
+for host in "${hosts[@]}"
+do
+    add_hostname_route "$host" "$vpn_interface"
+done
